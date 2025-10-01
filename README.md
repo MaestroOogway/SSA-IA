@@ -20,7 +20,7 @@ Cómo ejecutar
 
 Desde la terminal:
 
-python spider_swarm_clean.py
+python SSA.py
 
 
 Opcional: edita parámetros dentro del if __name__ == "__main__": (al inicio del bloque final):
