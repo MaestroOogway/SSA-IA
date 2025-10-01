@@ -1,218 +1,379 @@
-import pandas as pd
 import random as rnd
 import math
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
+from copy import deepcopy
 
+# reproducibilidad
+SEED = 42
+rnd.seed(SEED)
+np.random.seed(SEED)
+
+# constante usada en la transformación de fitness
 C = 0.01
 
 class Problem:
-  def __init__(self):
+    """
+    Modelado del problema (variables, límites, restricciones y función objetivo).
+    Variables: x1..x5 (número de anuncios por canal)
+    """
+    def __init__(self):
+        self.dimension = 5
+        # límites máximos por variable (ajusta si el informe dice otro)
+        # orden: x1, x2, x3, x4, x5
+        self.max_values = [15, 10, 25, 4, 30]
+        # peso/alcance por variable (para restricción de cobertura / clientes)
+        self.customer_weights = [1000, 2000, 1500, 2500, 300]
+        # Otros parámetros de la restricción (si aparecen en el informe)
+        # restricciones lineales:
+        # x1 + x2 <= 20
+        # 150*x1 + 300*x2 <= 1800
+        # x2 == 0 or x3 == 0  (no pueden coexistir diarios y TV noche)
+        # suma(weights_i * xi) <= 50000 (ejemplo tomado del informe propuesto)
+        self.coverage_limit = 50000
 
-    self.dimension=5
+    def checkConstraint(self, x):
+        """
+        Devuelve True si x cumple todas las restricciones, False en caso contrario.
+        """
+        if len(x) != self.dimension:
+            return False
 
-  def checkConstraint(self, x):
-    self.x1, self.x2, self.x3, self.x4, self.x5 = x
-    if (self.x1 >= 0 and
-      self.x2 >= 0 and
-      self.x3 >= 0 and
-      self.x4 >= 0 and
-      self.x5 >= 0 and
-      self.x1 <= 12 and
-      self.x2 <= 6 and
-      self.x3 <= 25 and
-      self.x4 <= 4 and
-      self.x5 <= 30 and
-      self.x1 + self.x2 <= 20 and
-      (150 * self.x1 + 300 * self.x2) <= 1800 and
-      (self.x2 == 0 or self.x3 == 0)) :
-      return True
+        # comprobar límites por variable
+        for i, xi in enumerate(x):
+            if xi is None:
+                return False
+            if xi < 0 or xi > self.max_values[i]:
+                return False
 
-  def eval(self, x):
-    self.x1, self.x2, self.x3, self.x4, self.x5 = x
-    self.max = -0.0178591* self.x1 - 0.0431486* self.x2 - 0.000551901* self.x3 - 0.0088101* self.x4 + 0.00171961* self.x5 + 0.6
-    return self.max
+        x1, x2, x3, x4, x5 = x
 
-class Spider(Problem):
-  def __init__(self):#A la araña se le atribuye el problema
-    self.p = Problem()
-    self.x = []
+        # restricciones específicas
+        if (x1 + x2) > 20:
+            return False
+        if (150 * x1 + 300 * x2) > 1800:
+            return False
+        # la restricción "o" original interpretada como no coexistencia
+        if (x2 != 0) and (x3 != 0):
+            return False
+        # restricción de cobertura (clientes potenciales)
+        coverage = sum(w * xi for w, xi in zip(self.customer_weights, x))
+        if coverage > self.coverage_limit:
+            return False
 
-    for j in range(self.p.dimension):
-      self.x.append(rnd.randint(0,25)) # Cambiar, dependiendo del algoritmo
+        return True
 
-  def isFeasible(self):
-    return self.p.checkConstraint(self.x)
+    def eval(self, x):
+        """
+        Evaluación de la función objetivo. Retorna un valor numérico (cuanto mayor -> mejor).
+        La expresión se deja similar al código original, pero se puede ajustar.
+        """
+        x1, x2, x3, x4, x5 = x
+        # Nota: la fórmula original devolvía un valor (posible negativo).
+        # Aseguramos que la función devuelva un float.
+        value = (-0.0178591 * x1
+                 -0.0431486 * x2
+                 -0.000551901 * x3
+                 -0.0088101 * x4
+                 +0.00171961 * x5
+                 + 0.6)
+        return float(value)
 
-  def isBetterThan(self, g):
-    #Posicion Objetivo Actual
-    vibration_intensity = math.log((1 / (self.fit() - C)) + 1)
-    #Posicion Objetivo del agente
-    g_vibration_intensity = math.log((1 / (g.fit() - C)) + 1)
-    return (vibration_intensity < g_vibration_intensity) # La intensidad de la vibracion del mejor agente es mejor que la actual.
 
-  def fit(self):
-    return self.p.eval(self.x)
+class Spider:
+    """
+    Representa una araña/individuo del enjambre.
+    Contiene la solución actual (vector x) y operaciones básicas.
+    """
+    def __init__(self, problem: Problem = None):
+        self.p = problem if problem is not None else Problem()
+        self.x = []
+        # inicializar dentro de límites por variable
+        for vmax in self.p.max_values:
+            self.x.append(float(rnd.randint(0, vmax)))
+        # asegurar factibilidad ocasionalmente (se validará en el Swarm)
+    
+    def isFeasible(self):
+        return self.p.checkConstraint(self.x)
 
-  def move(self, g , o):
-    ra = 0.8  # Tasa de atenuación de vibración que se propaga en la red.
-    pc = 0.5  # Probabilidad de cambio de máscara de dimensión en una caminata aleatoria.
-    pm = 0.8  # Probabilidad de cada valor en la máscara de dimensión para ser uno.
-    mask = [self.toBinary(pi) if rnd.random() < pc else mi for pi, mi in zip(g.x, self.x)]    # Determinar la máscara de dimensión para guiar el movimiento
-    # Calcular el nuevo siguiente movimiento de la araña
-    following_position = [gi + maski * (self.toBinary(rnd.randint(0, 1)) * ri - self.toBinary(rnd.randint(0, 1)) * xi)
-                              for gi, maski, ri, xi in zip(g.x, mask, rnd.choices([-1, 1], k=len(g.x)), self.x)]
-    # Realizar la caminata aleatoria y manejar las restricciones
-    for i in range(len(self.x)):
-      self.x[i] = g.x[i] + following_position[i] * rnd.uniform(0, 1) * ra
-      # Aplicar el reflejo si la nueva posición viola alguna restricción
-      if self.x[i] > 25:
-        self.x[i] = 25 - rnd.uniform(0, 1) * ra
-      elif self.x[i] < 0:
-        self.x[i] = rnd.uniform(0, 1) * ra
+    def fit(self):
+        return self.p.eval(self.x)
 
-  def toBinary(self, x):
-    return 1 if (1 / (1 + math.pow(math.e, -(x)))) > rnd.random() else 0
+    def copy(self, other: "Spider"):
+        """
+        Copia el estado de otra araña (deep copy para evitar aliasing).
+        """
+        self.x = deepcopy(other.x)
 
-  def __str__(self) -> str:
-    return f"fit: {self.fit()} x: {self.x}"
+    def isBetterThan(self, other: "Spider"):
+        """
+        Comparador robusto: transforma la fitness a una escala (sigmoide) y compara.
+        Se asume que mayor fit es mejor.
+        """
+        eps = 1e-9
+        f_self = self.fit()
+        f_other = other.fit()
+        # sigmoide centrada en C para mapear a (0,1)
+        def vib(f):
+            # protección contra overflow
+            z = (f - C)
+            if z > 700:
+                return 1.0
+            if z < -700:
+                return 0.0
+            return 1.0 / (1.0 + math.exp(-z))
+        return vib(f_self) > vib(f_other)
 
-  def copy(self, a):
-    self.x = a.x.copy()
+    def move(self, g: "Spider", o: float, ra: float, pc: float, pm: float):
+        """
+        Mover la araña hacia la mejor global g con parámetros:
+        o: medida de dispersión (std)
+        ra: tasa de atenuación
+        pc: probabilidad de cambio de máscara en cada dimensión
+        pm: probabilidad de que la máscara sea 1 cuando se decide cambiar
+        """
+        # construir máscara 0/1 para cada dimensión
+        mask = []
+        for _ in range(len(self.x)):
+            if rnd.random() < pc:
+                mask.append(1 if rnd.random() < pm else 0)
+            else:
+                mask.append(0)
 
-  def toString(self):
-    return self.x
+        # movimiento por dimensión
+        for i in range(len(self.x)):
+            direction = (g.x[i] - self.x[i]) * mask[i]
+            # paso con componente aleatoria y con ruido proporcional a 'o'
+            step = direction * rnd.uniform(0, 1) * ra + rnd.gauss(0, 0.05) * (o if o > 0 else 1.0)
+            new_val = self.x[i] + step
+
+            # reflejo / clamp a límites por variable
+            vmax = self.p.max_values[i]
+            if new_val < 0:
+                new_val = 0.0
+            elif new_val > vmax:
+                new_val = vmax
+            self.x[i] = float(new_val)
+
+    def __str__(self):
+        rounded = [int(round(v)) for v in self.x]
+        return f"fit: {self.fit():.6f} x: {rounded}"
+
+    def toListInt(self):
+        return [int(round(v)) for v in self.x]
+
 
 class Swarm:
-  def __init__(self):
-    self.maxIter = 30
-    self.nSpiders = 5 # Agregar los parametros del algoritmo
-    self.swarm = []
-    self.g = Spider()
-    self.iterations = []  # Lista para almacenar las iteraciones
-    self.best_fitness = []  # Lista para almacenar el me
-    self.best_solutions = []
+    """
+    Enjambre que contiene múltiples arañas y la lógica evolutiva.
+    """
+    def __init__(self, nSpiders: int = 5, maxIter: int = 30):
+        self.maxIter = maxIter
+        self.nSpiders = nSpiders
+        self.swarm = []
+        self.g = None  # mejor global (Spider)
+        self.iterations = []
+        self.best_fitness = []
+        self.best_solutions = []
 
+        # parámetros por defecto (pueden pasarse a solve)
+        self.ra = 0.8
+        self.pc = 0.5
+        self.pm = 0.8
 
-  def standard_deviation(self):
-    pop = [self.g.x for spider in self.swarm]
-    return np.std(pop)
+    def standard_deviation(self):
+        """
+        Desviación estándar promedio por dimensión (medida de dispersión).
+        """
+        if len(self.swarm) == 0:
+            return 0.0
+        pop = np.array([spider.x for spider in self.swarm], dtype=float)
+        std_per_dim = np.std(pop, axis=0)
+        return float(np.mean(std_per_dim))
 
-  def solve(self,ra,pc,pm):
-    print(ra,pc,pm)
-    self.initRand()
-    self.evolve()
+    def solve(self, ra: float = None, pc: float = None, pm: float = None):
+        """
+        Ejecuta el algoritmo: inicializa y evoluciona.
+        """
+        if ra is not None:
+            self.ra = ra
+        if pc is not None:
+            self.pc = pc
+        if pm is not None:
+            self.pm = pm
 
-  def initRand(self):
-    print("  -->  initRand  <-- ")
-    for i in range(self.nSpiders):#Aqui se agregan las Arañas al enjambre.
-      while True:
-        s = Spider()
-        if s.isFeasible():
-          break
-      self.swarm.append(s)
+        print(f"Parametros -> ra: {self.ra}, pc: {self.pc}, pm: {self.pm}")
+        self.initRand()
+        self.evolve()
 
-    self.g.copy(self.swarm[0])
-    for i in range(1, self.nSpiders):
-      if self.swarm[i].isBetterThan(self.g):
-        self.g.copy(self.swarm[i])
+    def initRand(self):
+        """
+        Inicializar la población con soluciones factibles.
+        """
+        print("  -->  initRand  <-- ")
+        self.swarm = []
+        attempts_limit = 2000
+        for i in range(self.nSpiders):
+            attempts = 0
+            while True:
+                s = Spider()
+                attempts += 1
+                if s.isFeasible():
+                    break
+                if attempts >= attempts_limit:
+                    # si no encontramos factible por alguna razón, forzamos una factible por clamping
+                    # clamp each var to min(max, current)
+                    for j in range(len(s.x)):
+                        s.x[j] = min(max(s.x[j], 0.0), s.p.max_values[j])
+                    if s.isFeasible():
+                        break
+            self.swarm.append(s)
 
-    self.swarmToConsole()
-    self.bestToConsole()
+        # inicializar mejor global (copia profunda)
+        self.g = Spider()
+        self.g.copy(self.swarm[0])
+        for i in range(1, self.nSpiders):
+            if self.swarm[i].isBetterThan(self.g):
+                self.g.copy(self.swarm[i])
 
-  def evolve(self):
-    print("  -->  evolve  <-- ")
-    o = self.standard_deviation()
-    t = 1
-    while t <= self.maxIter:
-      for i in range(self.nSpiders):
-        a = Spider()
-        while True:
-          a.copy(self.swarm[i])
-          a.move(self.g, o)
-          if a.isFeasible(): #Si a es factible
-            break
-        self.swarm[i].copy(a)
-      best_solution = max(self.swarm, key=lambda spider: spider.fit())  # Encontrar la mejor solución actual
-      self.best_solutions.append(best_solution)
-      for i in range(self.nSpiders):
-        if self.swarm[i].isBetterThan(self.g):
-          self.g.copy(self.swarm[i])
+        self.swarmToConsole()
+        self.bestToConsole()
 
-      best_fitness = max(spider.fit() for spider in self.swarm)
-      if len(self.best_fitness) == 0:
-        self.best_fitness.append(best_fitness)
-      else:
-        if best_fitness > self.best_fitness[-1]:
-          self.best_fitness.append(best_fitness)
+    def evolve(self):
+        """
+        Bucle principal de evolución.
+        """
+        print("  -->  evolve  <-- ")
+        t = 1
+        while t <= self.maxIter:
+            o = self.standard_deviation()
+            # mover cada araña
+            for i in range(self.nSpiders):
+                a = Spider()
+                a.copy(self.swarm[i])
+                attempts = 0
+                while True:
+                    a.move(self.g, o, self.ra, self.pc, self.pm)
+                    attempts += 1
+                    # si es factible, lo aceptamos; si no lo conseguimos tras N intentos, descartamos
+                    if a.isFeasible() or attempts >= 15:
+                        break
+                if a.isFeasible() and a.isBetterThan(self.swarm[i]):
+                    self.swarm[i].copy(a)
+
+            # actualizar mejor actual en la población
+            best_in_pop = max(self.swarm, key=lambda s: s.fit())
+            # guardar copia de la mejor encontrada en esta iteración
+            best_copy = Spider()
+            best_copy.copy(best_in_pop)
+            self.best_solutions.append(best_copy)
+
+            # actualizar mejor global self.g
+            if best_in_pop.isBetterThan(self.g):
+                self.g.copy(best_in_pop)
+
+            # registrar fitness para la curva de convergencia
+            current_best_fitness = best_in_pop.fit()
+            if len(self.best_fitness) == 0:
+                self.best_fitness.append(current_best_fitness)
+            else:
+                # guardar el mayor entre el histórico y el actual (monótono no decreciente)
+                self.best_fitness.append(max(self.best_fitness[-1], current_best_fitness))
+
+            self.iterations.append(t)
+
+            # feedback por consola (compacto)
+            print(f"Iter {t:02d} | best_pop_fit: {current_best_fitness:.6f} | global_best_fit: {self.g.fit():.6f}")
+            t += 1
+
+        print("Evolución finalizada.")
+        self.swarmToConsole()
+        self.bestToConsole()
+
+    def plotConvergence(self):
+        """
+        Grafica la convergencia del mejor fitness a lo largo de las iteraciones.
+        """
+        plt.figure(figsize=(8, 4))
+        plt.plot(self.iterations, self.best_fitness, marker='o')
+        plt.xlabel("Iterations")
+        plt.ylabel("Best Fitness (acumulado)")
+        plt.title("Convergence Plot")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    def plotBoxPerVariable(self):
+        """
+        Boxplot por variable usando la población final.
+        """
+        data_points = [spider.toListInt() for spider in self.swarm]
+        df = pd.DataFrame(data_points, columns=['TV Tarde', 'TV Noche', 'Diarios', 'Revistas', 'Radio'])
+        plt.figure(figsize=(9, 5))
+        sns.boxplot(data=df)
+        plt.xlabel('Tipo de Anuncio')
+        plt.ylabel('Cantidad de Anuncios')
+        plt.title('Distribución de Cantidades de Anuncios por Tipo (población final)')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    def swarmToConsole(self):
+        print(" -- Swarm --")
+        for i, spider in enumerate(self.swarm):
+            rounded_values = [int(round(val)) for val in spider.x]
+            print(f"[{i}] fit: {spider.fit():.6f} x: {rounded_values}")
+
+    def bestToConsole(self):
+        print(" -- Best Global --")
+        if self.g is not None:
+            print(f"fit: {self.g.fit():.6f} x: {[int(round(v)) for v in self.g.x]}")
         else:
-          self.best_fitness.append(self.best_fitness[-1])
-      self.iterations.append(t)
+            print("No hay solución global aún.")
+
+    def get_best_quality_scores(self):
+        """
+        Devuelve las fitness de las mejores soluciones guardadas (lista de floats).
+        """
+        return [s.fit() for s in self.best_solutions]
 
 
-      self.swarmToConsole()
-      self.bestToConsole()
-      t = t + 1
+if __name__ == "__main__":
+    try:
+        # parámetros elegidos (puedes experimentar)
+        ra = 0.5  # tasa de atenuación
+        pc = 0.2  # probabilidad de cambio de máscara
+        pm = 0.8  # probabilidad de 1 en la máscara
 
-  def plotConvergence(self):
-    plt.figure()
-    plt.plot(self.iterations, self.best_fitness, 'b-')
-    plt.xlabel("Iterations")
-    plt.ylabel("Best Fitness")
-    plt.title("Convergence Plot")
-    plt.show()
+        s = Swarm(nSpiders=8, maxIter=40)
+        s.solve(ra=ra, pc=pc, pm=pm)
 
-  def plotScatter(self):
-    data_points = [(round(spider.x[0]), round(spider.x[1]), round(spider.x[2]), round(spider.x[3]), round(spider.x[4])) for spider in s.swarm]
+        # graficas
+        s.plotConvergence()
+        s.plotBoxPerVariable()
 
-    # Extraer los valores de X y Y en listas separadas para cada variable
-    x1_values = [point[0] for point in data_points]
-    x2_values = [point[1] for point in data_points]
-    x3_values = [point[2] for point in data_points]
-    x4_values = [point[3] for point in data_points]
-    x5_values = [point[4] for point in data_points]
-    data = pd.DataFrame({'TV Tarde': x1_values, 'TV Noche': x2_values, 'Diarios': x3_values, 'Revistas': x4_values, 'Radio': x5_values})
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(data=data)
-    plt.xlabel('Tipo de Anuncio')
-    plt.ylabel('Cantidad de Anuncios')
-    plt.title('Distribución de Cantidades de Anuncios por Tipo')
-    plt.grid(True)
-    plt.show()
+        # Estadísticas descriptivas de las mejores soluciones por iteración
+        quality_scores = s.get_best_quality_scores()
+        if len(quality_scores) > 0:
+            mejor = max(quality_scores)
+            peor = min(quality_scores)
+            promedio = np.mean(quality_scores)
+            mediana = np.median(quality_scores)
+            desviacion_estandar = np.std(quality_scores)
+            rango_intercuartilico = np.percentile(quality_scores, 75) - np.percentile(quality_scores, 25)
 
-  def swarmToConsole(self):
-    print(" -- Swarm --")
-    for i in range(self.nSpiders):
-        rounded_values = [int(round(val)) for val in self.swarm[i].x]  # Redondear los valores a enteros
-        print(f"fit: {round(self.swarm[i].fit(),4)} " f"x: {rounded_values}")
-  def bestToConsole(self):
-    print(" -- Best --")
-    print(f"{round(self.g.fit(), 4)}")  # Redondear el
+            print("\nResumen estadístico sobre las mejores soluciones por iteración:")
+            print(f"Mejor: {mejor:.6f}")
+            print(f"Peor: {peor:.6f}")
+            print(f"Promedio: {promedio:.6f}")
+            print(f"Mediana: {mediana:.6f}")
+            print(f"Desviación Estándar: {desviacion_estandar:.6f}")
+            print(f"Rango Intercuartílico: {rango_intercuartilico:.6f}")
+        else:
+            print("No se tienen mejores soluciones registradas.")
 
-try:
-  ra = 0.5  # Tasa de atenuación de vibración que se propaga en la red.
-  pc = 0.2  # Probabilidad de cambio de máscara de dimensión en una caminata aleatoria.
-  pm = 0.8  # Probabilidad de cada valor en la máscara de dimensión para ser uno.
-  s = Swarm()
-  s.solve(ra,pc,pm)
-  s.plotConvergence()
-  s.plotScatter()
-  # Obtener las calificaciones de calidad de las mejores soluciones
-  quality_scores = [best_solution.fit() for best_solution in s.best_solutions]
+    except Exception as e:
+        print("Error durante la ejecución:", e)
 
-    # Calcular las medidas de resumen descriptivo
-  mejor = max(quality_scores)
-  peor = min(quality_scores)
-  promedio = np.mean(quality_scores)
-  mediana = np.median(quality_scores)
-  desviacion_estandar = np.std(quality_scores)
-  rango_intercuartilico = np.percentile(quality_scores, 75) - np.percentile(quality_scores, 25)
-  print("Mejor:", mejor)
-  print("Peor:", peor)
-  print("Promedio:", promedio)
-  print("Mediana:", mediana)
-  print("Desviación Estándar:", desviacion_estandar)
-  print("Rango Intercuartílico:", rango_intercuartilico)
-except Exception as e:
-  print(f"{e} \nCaused by {e.__cause__}")
