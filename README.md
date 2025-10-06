@@ -3,10 +3,6 @@ Spider Swarm Optimizer
 Breve:
 Implementación en Python de un algoritmo tipo Spider Swarm para resolver un problema de asignación de anuncios (5 variables). El código incluye restricciones del problema, movimiento de individuos, control de factibilidad, visualizaciones y estadísticas básicas.
 
-Archivos
-
-spider_swarm_clean.py — Código principal listo para ejecutar.
-
 Requisitos
 
 Python 3.8+
