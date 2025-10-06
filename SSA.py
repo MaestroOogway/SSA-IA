@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import sys
 from copy import deepcopy
 
 # reproducibilidad
@@ -21,17 +22,16 @@ class Problem:
     """
     def __init__(self):
         self.dimension = 5
-        # límites máximos por variable (ajusta si el informe dice otro)
+        # límites máximos por variable 
         # orden: x1, x2, x3, x4, x5
         self.max_values = [15, 10, 25, 4, 30]
         # peso/alcance por variable (para restricción de cobertura / clientes)
         self.customer_weights = [1000, 2000, 1500, 2500, 300]
-        # Otros parámetros de la restricción (si aparecen en el informe)
+        # Otros parámetros de la restricción 
         # restricciones lineales:
         # x1 + x2 <= 20
         # 150*x1 + 300*x2 <= 1800
         # x2 == 0 or x3 == 0  (no pueden coexistir diarios y TV noche)
-        # suma(weights_i * xi) <= 50000 (ejemplo tomado del informe propuesto)
         self.coverage_limit = 50000
 
     def checkConstraint(self, x):
@@ -341,39 +341,66 @@ class Swarm:
 
 
 if __name__ == "__main__":
+    import sys
+
+    MAX_SPIDERS = 30
+    MAX_ITER = 100
+    n_runs = 20
+
+    # Validar argumentos
+    if len(sys.argv) != 3:
+        print("Uso: python SSA.py <num_arañas> <num_iteraciones>")
+        sys.exit(1)
+
     try:
-        # parámetros elegidos (puedes experimentar)
-        ra = 0.5  # tasa de atenuación
-        pc = 0.2  # probabilidad de cambio de máscara
-        pm = 0.8  # probabilidad de 1 en la máscara
+        nSpiders = int(sys.argv[1])
+        maxIter = int(sys.argv[2])
+    except ValueError:
+        print("Error: los argumentos deben ser números enteros.")
+        sys.exit(1)
 
-        s = Swarm(nSpiders=8, maxIter=40)
-        s.solve(ra=ra, pc=pc, pm=pm)
+    # Restricciones
+    if nSpiders < 1 or nSpiders > MAX_SPIDERS:
+        print(f"Error: la cantidad de arañas debe ser entre 1 y {MAX_SPIDERS}.")
+        sys.exit(1)
 
-        # graficas
-        s.plotConvergence()
-        s.plotBoxPerVariable()
+    if maxIter < 1 or maxIter > MAX_ITER:
+        print(f"Error: la cantidad de iteraciones debe ser entre 1 y {MAX_ITER}.")
+        sys.exit(1)
 
-        # Estadísticas descriptivas de las mejores soluciones por iteración
-        quality_scores = s.get_best_quality_scores()
-        if len(quality_scores) > 0:
-            mejor = max(quality_scores)
-            peor = min(quality_scores)
-            promedio = np.mean(quality_scores)
-            mediana = np.median(quality_scores)
-            desviacion_estandar = np.std(quality_scores)
-            rango_intercuartilico = np.percentile(quality_scores, 75) - np.percentile(quality_scores, 25)
+    print(f"Número de arañas: {nSpiders}")
+    print(f"Número de iteraciones: {maxIter}")
+    print(f"El algoritmo se ejecutará {n_runs} veces\n")
 
-            print("\nResumen estadístico sobre las mejores soluciones por iteración:")
-            print(f"Mejor: {mejor:.6f}")
-            print(f"Peor: {peor:.6f}")
-            print(f"Promedio: {promedio:.6f}")
-            print(f"Mediana: {mediana:.6f}")
-            print(f"Desviación Estándar: {desviacion_estandar:.6f}")
-            print(f"Rango Intercuartílico: {rango_intercuartilico:.6f}")
-        else:
-            print("No se tienen mejores soluciones registradas.")
+    # parámetros del algoritmo
+    ra = 0.5  # tasa de atenuación
+    pc = 0.2  # probabilidad de cambio de máscara
+    pm = 0.8  # probabilidad de 1 en la máscara
 
-    except Exception as e:
-        print("Error durante la ejecución:", e)
+    # inicializar y ejecutar enjambre
+    s = Swarm(nSpiders=nSpiders, maxIter=maxIter)
+    s.solve(ra=ra, pc=pc, pm=pm)
 
+    # graficas
+    s.plotConvergence()
+    s.plotBoxPerVariable()
+
+    # Estadísticas descriptivas de las mejores soluciones por iteración
+    quality_scores = s.get_best_quality_scores()
+    if len(quality_scores) > 0:
+        mejor = max(quality_scores)
+        peor = min(quality_scores)
+        promedio = np.mean(quality_scores)
+        mediana = np.median(quality_scores)
+        desviacion_estandar = np.std(quality_scores)
+        rango_intercuartilico = np.percentile(quality_scores, 75) - np.percentile(quality_scores, 25)
+
+        print("\nResumen estadístico sobre las mejores soluciones por iteración:")
+        print(f"Mejor: {mejor:.6f}")
+        print(f"Peor: {peor:.6f}")
+        print(f"Promedio: {promedio:.6f}")
+        print(f"Mediana: {mediana:.6f}")
+        print(f"Desviación Estándar: {desviacion_estandar:.6f}")
+        print(f"Rango Intercuartílico: {rango_intercuartilico:.6f}")
+    else:
+        print("No se tienen mejores soluciones registradas.")
